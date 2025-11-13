@@ -25,7 +25,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="bg-neutral-950 text-neutral-50">
+      <body className="bg-white text-neutral-950 antialiased">
         <ConvexClientProvider>{children}</ConvexClientProvider>
       </body>
     </html>
