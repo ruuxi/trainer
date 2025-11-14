@@ -15,5 +15,20 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("userId", ["userId"]),
+  datasets: defineTable({
+    userId: v.string(),
+    name: v.string(),
+    description: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("userId", ["userId"]),
+  datasetImages: defineTable({
+    datasetId: v.id("datasets"),
+    userId: v.string(),
+    key: v.string(),
+    bucket: v.string(),
+    createdAt: v.number(),
+  })
+    .index("datasetId", ["datasetId"])
+    .index("userId", ["userId"]),
 });
 

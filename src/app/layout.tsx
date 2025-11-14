@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "FromYou - The Best Ai Trainer and Workflow Platform",
+  title: "GoModel - The Best Ai Trainer and Workflow Platform",
   description: "The easiest way to train your AI, create workflows, and share creations",
 };
 

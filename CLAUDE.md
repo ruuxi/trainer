@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Next.js 16 application called "FromYou - The Best Ai Trainer and Workflow Platform" that uses Convex for the backend and Better Auth for authentication. The project uses TypeScript, React 19, Tailwind CSS v4, and shadcn/ui components.
+This is a Next.js 16 application called "GoModel - The Best Ai Trainer and Workflow Platform" that uses Convex for the backend and Better Auth for authentication. The project uses TypeScript, React 19, Tailwind CSS v4, and shadcn/ui components.
 
 ## Development Commands
 

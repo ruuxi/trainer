@@ -1,26 +1,42 @@
 "use client";
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+
 import { useState } from "react";
-import { Loader2, X } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { authClient } from "@/lib/auth-client";
+import { Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 
-export default function SignUp() {
+type SignInDialogProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+};
+
+export default function SignInDialog({ open, onOpenChange }: SignInDialogProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [image, setImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const handleOpenChange = (next: boolean) => {
+    if (!next) {
+      setEmail("");
+      setPassword("");
+      setImage(null);
+      setImagePreview(null);
+      setLoading(false);
+    }
+    onOpenChange(next);
+  };
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -51,6 +67,7 @@ export default function SignUp() {
         },
         onSuccess: () => {
           setLoading(false);
+          handleOpenChange(false);
         },
         onError: async (ctx) => {
           setLoading(false);
@@ -63,14 +80,14 @@ export default function SignUp() {
   };
 
   return (
-    <Card className="max-w-md">
-      <CardHeader>
-        <CardTitle className="text-lg md:text-xl">Sign Up</CardTitle>
-        <CardDescription className="text-xs md:text-sm">
-          Enter your information to create an account
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-lg md:text-xl">Sign Up</DialogTitle>
+          <DialogDescription className="text-xs md:text-sm">
+            Enter your information to create an account
+          </DialogDescription>
+        </DialogHeader>
         <div className="grid gap-4">
           <div className="grid gap-2">
             <Label htmlFor="email">Email</Label>
@@ -141,15 +158,13 @@ export default function SignUp() {
             )}
           </Button>
         </div>
-      </CardContent>
-      <CardFooter>
         <div className="flex justify-center w-full border-t py-4">
           <p className="text-center text-xs text-neutral-500">
             Secured by <span className="text-orange-400">better-auth.</span>
           </p>
         </div>
-      </CardFooter>
-    </Card>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -161,3 +176,5 @@ async function convertImageToBase64(file: File): Promise<string> {
     reader.readAsDataURL(file);
   });
 }
+
+

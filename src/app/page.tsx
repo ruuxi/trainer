@@ -1,18 +1,16 @@
 "use client";
 
+import { useCallback, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type KeyboardEvent } from "react";
+import { useMutation, useQuery } from "convex/react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import {
-  PromptInput,
-  PromptInputBody,
-  PromptInputFooter,
-  PromptInputSubmit,
-  PromptInputTextarea,
-  PromptInputTools,
-} from "@/components/ai-elements/prompt-input";
-import { Sparkles, Zap, Users, Heart, ArrowRight } from "lucide-react";
-import Link from "next/link";
+import { Sparkles, Zap, Users, Heart, ArrowRight, Upload, Check, Loader2 } from "lucide-react";
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
+import { cn } from "@/lib/utils";
+import SignInDialog from "@/components/auth/SignInDialog";
 
 // Mock data for featured content
 const featuredModels = [
@@ -72,11 +70,225 @@ const featuredWorkflows = [
 ];
 
 export default function Home() {
-  const handleSubmit = (message: { text: string; files: any[] }) => {
-    // Demo mode - just log the message
-    console.log("Demo submission:", message);
-    // In production, this would trigger the AI workflow
-  };
+  const currentUser = useQuery(api.auth.getCurrentUser);
+  const isSignedIn = Boolean(currentUser);
+
+  const createDataset = useMutation(api.datasets.create);
+  const generateUploadUrl = useMutation(api.r2.generateUploadUrl);
+  const syncMetadata = useMutation(api.r2.syncMetadata);
+
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [showSignInDialog, setShowSignInDialog] = useState(false);
+  const [uploadMessage, setUploadMessage] = useState<string | null>(null);
+  const [activeDatasetId, setActiveDatasetId] = useState<Id<"datasets"> | null>(null);
+  const [activeDatasetName, setActiveDatasetName] = useState<string | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const datasetCreationPromise = useRef<Promise<{ datasetId: Id<"datasets">; datasetName: string }> | null>(null);
+
+  const ensureDataset = useCallback(async () => {
+    if (activeDatasetId) {
+      return {
+        datasetId: activeDatasetId,
+        datasetName: activeDatasetName ?? "Untitled dataset",
+      };
+    }
+
+    if (!datasetCreationPromise.current) {
+      const datasetName = `Quick Dataset ${new Date().toLocaleString()}`;
+      datasetCreationPromise.current = createDataset({ name: datasetName })
+        .then(({ datasetId }) => {
+          setActiveDatasetId(datasetId);
+          setActiveDatasetName(datasetName);
+          datasetCreationPromise.current = null;
+          return { datasetId, datasetName };
+        })
+        .catch((error) => {
+          datasetCreationPromise.current = null;
+          throw error;
+        });
+    }
+
+    return datasetCreationPromise.current!;
+  }, [activeDatasetId, activeDatasetName, createDataset]);
+
+  const handleFileSelection = useCallback(
+    async (files: FileList | File[]) => {
+      if (!isSignedIn) {
+        setShowSignInDialog(true);
+        return;
+      }
+
+      try {
+        await ensureDataset();
+      } catch (error) {
+        console.error(error);
+        setUploadMessage("Failed to create dataset. Please try again.");
+        return;
+      }
+
+      const incoming = Array.from(files).filter((file) =>
+        file.type ? file.type.startsWith("image/") : true,
+      );
+      if (!incoming.length) {
+        return;
+      }
+      setSelectedFiles((prev) => {
+        const next = [...prev];
+        incoming.forEach((file) => {
+          const exists = next.some(
+            (current) =>
+              current.name === file.name &&
+              current.size === file.size &&
+              current.lastModified === file.lastModified,
+          );
+          if (!exists) {
+            next.push(file);
+          }
+        });
+        return next;
+      });
+    },
+    [ensureDataset, isSignedIn],
+  );
+
+  const handleDrop = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      setIsDragging(false);
+      if (!isSignedIn) {
+        setShowSignInDialog(true);
+        return;
+      }
+      if (event.dataTransfer?.files?.length) {
+        void handleFileSelection(event.dataTransfer.files);
+      }
+    },
+    [handleFileSelection, isSignedIn],
+  );
+
+  const handleDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    if (!isDragging) {
+      setIsDragging(true);
+    }
+  }, [isDragging]);
+
+  const handleDragLeave = useCallback((event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setIsDragging(false);
+  }, []);
+
+  const handleClickDropArea = useCallback(() => {
+    if (!isSignedIn) {
+      setShowSignInDialog(true);
+      return;
+    }
+    fileInputRef.current?.click();
+  }, [isSignedIn]);
+
+  const handleFileInputChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const files = event.target.files;
+      if (!files?.length) {
+        return;
+      }
+      if (!isSignedIn) {
+        setShowSignInDialog(true);
+        event.target.value = "";
+        return;
+      }
+      void handleFileSelection(files);
+      event.target.value = "";
+    },
+    [handleFileSelection, isSignedIn],
+  );
+
+  const handleUploadButtonClick = useCallback(() => {
+    if (!isSignedIn) {
+      setShowSignInDialog(true);
+      return;
+    }
+    fileInputRef.current?.click();
+  }, [isSignedIn]);
+
+  const handleSubmitUpload = useCallback(async () => {
+    if (!isSignedIn) {
+      setShowSignInDialog(true);
+      return;
+    }
+    if (!selectedFiles.length) {
+      return;
+    }
+    setIsUploading(true);
+    setUploadMessage(null);
+    try {
+      const datasetInfo = await ensureDataset();
+      if (!datasetInfo) {
+        throw new Error("Dataset not available");
+      }
+      await Promise.all(
+        selectedFiles.map(async (file) => {
+          const { url, key } = await generateUploadUrl({
+            datasetId: datasetInfo.datasetId,
+          });
+          const response = await fetch(url, {
+            method: "PUT",
+            headers: { "Content-Type": file.type },
+            body: file,
+          });
+          if (!response.ok) {
+            throw new Error(`Failed to upload image: ${response.statusText}`);
+          }
+          await syncMetadata({ key });
+        }),
+      );
+      setSelectedFiles([]);
+      setUploadMessage(
+        datasetInfo.datasetName
+          ? `Upload complete! Saved to ${datasetInfo.datasetName}.`
+          : "Upload complete! Your dataset is ready.",
+      );
+    } catch (error) {
+      console.error(error);
+      setUploadMessage("Upload failed. Please try again.");
+    } finally {
+      setIsUploading(false);
+    }
+  }, [
+    ensureDataset,
+    generateUploadUrl,
+    isSignedIn,
+    selectedFiles,
+    syncMetadata,
+  ]);
+
+  const handleGenerateDatasetClick = useCallback(() => {
+    if (!isSignedIn) {
+      setShowSignInDialog(true);
+    }
+  }, [isSignedIn]);
+
+  const selectedFilesPreview = useMemo(() => {
+    if (!selectedFiles.length) {
+      return "";
+    }
+    const names = selectedFiles.map((file) => file.name);
+    if (names.length <= 3) {
+      return names.join(", ");
+    }
+    return `${names.slice(0, 3).join(", ")} + ${names.length - 3} more`;
+  }, [selectedFiles]);
+
+  const selectedFilesSizeLabel = useMemo(() => {
+    if (!selectedFiles.length) {
+      return "";
+    }
+    const totalBytes = selectedFiles.reduce((sum, file) => sum + file.size, 0);
+    return `${(totalBytes / (1024 * 1024)).toFixed(1)} MB total`;
+  }, [selectedFiles]);
 
   return (
     <div className="relative min-h-screen bg-white">
@@ -84,7 +296,7 @@ export default function Home() {
       <header className="sticky top-0 z-50 border-b border-neutral-200 bg-white/80 backdrop-blur-md">
         <div className="container mx-auto flex h-16 items-center justify-between px-6">
           <Link href="/" className="flex items-center gap-2 transition-opacity hover:opacity-70">
-            <span className="font-semibold text-lg tracking-tight">FromYou</span>
+            <span className="font-semibold text-lg tracking-tight">GoModel</span>
           </Link>
           <nav className="flex items-center gap-4">
             <Link href="/sign-in">
@@ -103,46 +315,209 @@ export default function Home() {
       <main className="relative">
         {/* Hero */}
         <section className="container mx-auto px-6 py-32 md:py-20">
-          <div className="mx-auto max-w-4xl space-y-16">
+          <div className="mx-auto max-w-5xl space-y-12">
             {/* Value Proposition */}
-            <div className="space-y-8 text-center animate-in fade-in slide-in-from-bottom-4 duration-700">
+            <div className="space-y-6 text-center animate-in fade-in slide-in-from-bottom-4 duration-700">
+              <Badge className="mx-auto w-fit border-neutral-200 bg-neutral-50 text-neutral-600 text-xs">
+                Image Generation Training
+              </Badge>
               <h1 className="font-semibold text-5xl tracking-[-0.02em] md:text-7xl">
-                Train AI models
+                Train custom image models
               </h1>
               <p className="mx-auto max-w-2xl text-lg text-neutral-600 md:text-xl">
-                Create custom image and video models, build AI workflows, and share your creations.
+                Create personalized AI image models in minutes. Upload your images or let AI build your dataset.
               </p>
             </div>
 
-            {/* Prompt Input */}
-            <div className="mx-auto max-w-3xl animate-in fade-in slide-in-from-bottom-8 duration-700 delay-150">
-              <div className="rounded-xl border border-neutral-200 bg-white p-2 shadow-lg transition-shadow duration-300 hover:shadow-xl">
-                <PromptInput onSubmit={handleSubmit}>
-                  <PromptInputBody>
-                    <PromptInputTextarea
-                      placeholder="Try: 'Train a model on my art style' or 'Create a music video from my photos'"
-                      className="min-h-28 border-0 bg-transparent text-base placeholder:text-neutral-400"
-                    />
-                  </PromptInputBody>
-                  <PromptInputFooter>
-                    <PromptInputTools />
-                    <PromptInputSubmit className="bg-black text-white hover:bg-neutral-800" />
-                  </PromptInputFooter>
-                </PromptInput>
-              </div>
+            {/* Two Path Options */}
+            <div className="grid gap-6 md:grid-cols-2 animate-in fade-in slide-in-from-bottom-8 duration-700 delay-150">
+              {/* Option 1: Upload Images */}
+              <Card className="group relative cursor-pointer overflow-hidden border-2 border-neutral-200 bg-white transition-all duration-300 hover:border-black hover:shadow-2xl">
+                <CardHeader className="space-y-4 pb-8">
+                  <div className="flex size-14 items-center justify-center rounded-full bg-black text-white transition-transform group-hover:scale-110">
+                    <Upload className="size-6" />
+                  </div>
+                  <div className="space-y-2">
+                    <CardTitle className="text-2xl tracking-tight">Upload Your Images</CardTitle>
+                    <CardDescription className="text-neutral-600 text-sm leading-relaxed">
+                      Have your own photos? Upload them with captions or let AI generate them automatically.
+                    </CardDescription>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-3 text-neutral-600 text-sm">
+                      <div className="flex size-5 items-center justify-center rounded-full bg-neutral-100">
+                        <Check className="size-3" />
+                      </div>
+                      <span>Support for JPG, PNG, WebP</span>
+                    </div>
+                    <div className="flex items-center gap-3 text-neutral-600 text-sm">
+                      <div className="flex size-5 items-center justify-center rounded-full bg-neutral-100">
+                        <Check className="size-3" />
+                      </div>
+                      <span>Auto-caption generation</span>
+                    </div>
+                    <div className="flex items-center gap-3 text-neutral-600 text-sm">
+                      <div className="flex size-5 items-center justify-center rounded-full bg-neutral-100">
+                        <Check className="size-3" />
+                      </div>
+                      <span>Manual caption editing</span>
+                    </div>
+                  </div>
+                  <div
+                    className={cn(
+                      "rounded-2xl border-2 border-dashed bg-neutral-50 p-6 text-center transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-black",
+                      isDragging ? "border-black bg-white" : "border-neutral-200",
+                    )}
+                    role="button"
+                    tabIndex={0}
+                    onClick={handleClickDropArea}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        handleClickDropArea();
+                      }
+                    }}
+                  >
+                    <p className="font-medium text-sm text-neutral-900">
+                      Drag & drop images or click to browse
+                    </p>
+                    <p className="text-xs text-neutral-500 mt-1">
+                      JPG, PNG, or WebP up to 25MB each
+                    </p>
+                    {activeDatasetName && (
+                      <p className="mt-2 text-xs text-neutral-500">
+                        Uploading to{" "}
+                        <span className="font-semibold text-neutral-900">
+                          {activeDatasetName}
+                        </span>
+                      </p>
+                    )}
+                    {selectedFiles.length > 0 && (
+                      <div className="mt-4 space-y-1 text-xs text-neutral-600">
+                        <p className="font-semibold">
+                          {selectedFiles.length} file{selectedFiles.length === 1 ? "" : "s"} selected
+                        </p>
+                        <p className="truncate">{selectedFilesPreview}</p>
+                        <p className="text-neutral-500">{selectedFilesSizeLabel}</p>
+                      </div>
+                    )}
+                    {!isSignedIn && (
+                      <p className="mt-4 text-xs font-medium text-rose-500">
+                        Sign in to upload your training data.
+                      </p>
+                    )}
+                  </div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    multiple
+                    className="sr-only"
+                    onChange={handleFileInputChange}
+                  />
+                  {uploadMessage && (
+                    <div className="rounded-lg border border-neutral-200 bg-white/80 px-4 py-2 text-xs text-neutral-600">
+                      {uploadMessage}
+                    </div>
+                  )}
+                </CardContent>
+                <CardFooter className="flex flex-col gap-3 pt-6">
+                  <Button
+                    className="w-full bg-black text-white hover:bg-neutral-800 group-hover:scale-105 transition-transform"
+                    type="button"
+                    onClick={handleUploadButtonClick}
+                  >
+                    {selectedFiles.length ? "Add More Images" : "Upload Images"}
+                    <ArrowRight className="ml-2 size-4" />
+                  </Button>
+                  {selectedFiles.length > 0 && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full border-neutral-300 text-sm font-semibold"
+                      disabled={isUploading}
+                      onClick={handleSubmitUpload}
+                    >
+                      {isUploading && <Loader2 className="mr-2 size-4 animate-spin" />}
+                      Submit
+                    </Button>
+                  )}
+                </CardFooter>
+                {/* Popular badge */}
+                <div className="absolute top-4 right-4">
+                  <Badge className="border-black bg-black text-white text-xs">
+                    Most Popular
+                  </Badge>
+                </div>
+              </Card>
 
-              {/* Example prompts */}
-              <div className="mt-6 flex flex-wrap justify-center gap-3">
-                <Button variant="outline" size="sm" className="border-neutral-200 text-neutral-600 text-xs hover:border-black hover:text-black">
-                  Train on my photos
-                </Button>
-                <Button variant="outline" size="sm" className="border-neutral-200 text-neutral-600 text-xs hover:border-black hover:text-black">
-                  Create video workflow
-                </Button>
-                <Button variant="outline" size="sm" className="border-neutral-200 text-neutral-600 text-xs hover:border-black hover:text-black">
-                  Generate dataset
-                </Button>
-              </div>
+              {/* Option 2: AI-Generated Dataset */}
+              <Card className="group relative cursor-pointer overflow-hidden border-2 border-neutral-200 bg-white transition-all duration-300 hover:border-black hover:shadow-2xl">
+                <CardHeader className="space-y-4 pb-8">
+                  <div className="flex size-14 items-center justify-center rounded-full bg-black text-white transition-transform group-hover:scale-110">
+                    <Sparkles className="size-6" />
+                  </div>
+                  <div className="space-y-2">
+                    <CardTitle className="text-2xl tracking-tight">AI-Powered Dataset</CardTitle>
+                    <CardDescription className="text-neutral-600 text-sm leading-relaxed">
+                      Let AI find and curate the perfect training dataset based on your description.
+                    </CardDescription>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-3 text-neutral-600 text-sm">
+                      <div className="flex size-5 items-center justify-center rounded-full bg-neutral-100">
+                        <Check className="size-3" />
+                      </div>
+                      <span>AI image sourcing</span>
+                    </div>
+                    <div className="flex items-center gap-3 text-neutral-600 text-sm">
+                      <div className="flex size-5 items-center justify-center rounded-full bg-neutral-100">
+                        <Check className="size-3" />
+                      </div>
+                      <span>Auto-captioning included</span>
+                    </div>
+                    <div className="flex items-center gap-3 text-neutral-600 text-sm">
+                      <div className="flex size-5 items-center justify-center rounded-full bg-neutral-100">
+                        <Check className="size-3" />
+                      </div>
+                      <span>Quality filtering</span>
+                    </div>
+                  </div>
+                </CardContent>
+                <CardFooter className="pt-6">
+                  <Button
+                    className="w-full bg-black text-white hover:bg-neutral-800 group-hover:scale-105 transition-transform"
+                    type="button"
+                    onClick={handleGenerateDatasetClick}
+                  >
+                    Generate Dataset
+                    <ArrowRight className="ml-2 size-4" />
+                  </Button>
+                </CardFooter>
+                {/* New badge */}
+                <div className="absolute top-4 right-4">
+                  <Badge variant="outline" className="border-neutral-200 bg-white text-neutral-600 text-xs">
+                    AI-Powered
+                  </Badge>
+                </div>
+              </Card>
+            </div>
+
+            {/* Quick info */}
+            <div className="mx-auto max-w-2xl text-center text-neutral-500 text-sm animate-in fade-in duration-700 delay-300">
+              <p>
+                Both options include automatic optimization and GPU-powered training.
+                <Link href="/pricing" className="ml-1 text-black underline-offset-4 hover:underline">
+                  See pricing
+                </Link>
+              </p>
             </div>
           </div>
         </section>
@@ -303,9 +678,10 @@ export default function Home() {
       {/* Footer */}
       <footer className="border-t border-neutral-200 bg-neutral-50 py-16">
         <div className="container mx-auto px-6 text-center text-neutral-500 text-sm">
-          <p>&copy; 2025 FromYou. Making AI accessible to everyone.</p>
+          <p>&copy; 2025 GoModel. Making AI accessible to everyone.</p>
         </div>
       </footer>
+      <SignInDialog open={showSignInDialog} onOpenChange={setShowSignInDialog} />
     </div>
   );
 }
