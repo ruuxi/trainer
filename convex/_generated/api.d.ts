@@ -18,6 +18,8 @@ import type * as emails_verifyEmail from "../emails/verifyEmail.js";
 import type * as emails_verifyOTP from "../emails/verifyOTP.js";
 import type * as generatedSchema from "../generatedSchema.js";
 import type * as http from "../http.js";
+import type * as integration from "../integration.js";
+import type * as jobs from "../jobs.js";
 import type * as r2 from "../r2.js";
 import type * as todos from "../todos.js";
 
@@ -38,6 +40,8 @@ declare const fullApi: ApiFromModules<{
   "emails/verifyOTP": typeof emails_verifyOTP;
   generatedSchema: typeof generatedSchema;
   http: typeof http;
+  integration: typeof integration;
+  jobs: typeof jobs;
   r2: typeof r2;
   todos: typeof todos;
 }>;

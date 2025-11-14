@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type KeyboardEvent } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Sparkles, Zap, Users, Heart, ArrowRight, Upload, Check, Loader2 } from "lucide-react";
+import { Sparkles, Zap, Users, Heart, ArrowRight, Upload, Check, Loader2, Rocket } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { cn } from "@/lib/utils";
@@ -76,6 +76,8 @@ export default function Home() {
   const createDataset = useMutation(api.datasets.create);
   const generateUploadUrl = useMutation(api.r2.generateUploadUrl);
   const syncMetadata = useMutation(api.r2.syncMetadata);
+  const startTrainingJob = useAction(api.jobs.startQwenImageEditJob);
+  const syncJobsAction = useAction(api.jobs.syncJobsForDataset);
 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -84,6 +86,14 @@ export default function Home() {
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
   const [activeDatasetId, setActiveDatasetId] = useState<Id<"datasets"> | null>(null);
   const [activeDatasetName, setActiveDatasetName] = useState<string | null>(null);
+  const [isStartingJob, setIsStartingJob] = useState(false);
+  const [isSyncingJobs, setIsSyncingJobs] = useState(false);
+  const [jobToast, setJobToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const datasetJobs = useQuery(
+    api.jobs.listJobsForDataset,
+    activeDatasetId ? { datasetId: activeDatasetId } : "skip",
+  );
+  const datasetJobList = Array.isArray(datasetJobs) ? datasetJobs : [];
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const datasetCreationPromise = useRef<Promise<{ datasetId: Id<"datasets">; datasetName: string }> | null>(null);
@@ -271,6 +281,54 @@ export default function Home() {
     }
   }, [isSignedIn]);
 
+  const handleStartTrainingJob = useCallback(async () => {
+    if (!isSignedIn) {
+      setShowSignInDialog(true);
+      return;
+    }
+    setJobToast(null);
+    setIsStartingJob(true);
+    try {
+      const datasetInfo = await ensureDataset();
+      const result = await startTrainingJob({
+        datasetId: datasetInfo.datasetId,
+      });
+      setJobToast({
+        type: "success",
+        message: `Queued job ${result.jobName ?? ""}`.trim(),
+      });
+    } catch (error) {
+      console.error(error);
+      setJobToast({
+        type: "error",
+        message: "Failed to queue training job. Check dataset uploads and try again.",
+      });
+    } finally {
+      setIsStartingJob(false);
+    }
+  }, [ensureDataset, isSignedIn, setShowSignInDialog, startTrainingJob]);
+
+  const handleSyncJobs = useCallback(async () => {
+    if (!isSignedIn || !activeDatasetId) {
+      if (!isSignedIn) {
+        setShowSignInDialog(true);
+      }
+      return;
+    }
+    setIsSyncingJobs(true);
+    try {
+      await syncJobsAction({ datasetId: activeDatasetId });
+    } catch (error) {
+      console.error(error);
+      setJobToast({
+        type: "error",
+        message: "Unable to refresh job status right now.",
+      });
+    } finally {
+      setIsSyncingJobs(false);
+    }
+  }, [activeDatasetId, isSignedIn, setShowSignInDialog, syncJobsAction]);
+
   const selectedFilesPreview = useMemo(() => {
     if (!selectedFiles.length) {
       return "";
@@ -447,7 +505,68 @@ export default function Home() {
                       Submit
                     </Button>
                   )}
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="w-full border-neutral-300 text-sm font-semibold"
+                    disabled={isStartingJob || !activeDatasetId}
+                    onClick={handleStartTrainingJob}
+                  >
+                    {isStartingJob && <Loader2 className="mr-2 size-4 animate-spin" />}
+                    <Rocket className="mr-2 size-4" />
+                    Train Qwen Image Edit 2509
+                  </Button>
                 </CardFooter>
+                {(jobToast || datasetJobList.length > 0) && (
+                  <div className="mx-6 mb-6 mt-2 space-y-3 rounded-xl border border-neutral-200 bg-neutral-50 p-4 text-xs text-neutral-600">
+                    {jobToast && (
+                      <p className={jobToast.type === "success" ? "text-emerald-600" : "text-rose-600"}>
+                        {jobToast.message}
+                      </p>
+                    )}
+                    {datasetJobList.length > 0 && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <p className="font-semibold text-neutral-900">Recent jobs</p>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-2 text-[11px]"
+                            onClick={handleSyncJobs}
+                            disabled={isSyncingJobs}
+                          >
+                            {isSyncingJobs && <Loader2 className="mr-1 size-3 animate-spin" />}
+                            Refresh
+                          </Button>
+                        </div>
+                        <ul className="space-y-1">
+                          {datasetJobList.map((job) => (
+                            <li key={job._id} className="flex items-center justify-between text-neutral-700">
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-xs font-semibold">
+                                  {job.aiToolkitJobName ?? "Untitled job"}
+                                </p>
+                                <p className="text-[11px] text-neutral-500">
+                                  {job.samplePaths?.length
+                                    ? `${job.samplePaths.length} samples`
+                                    : "No samples yet"}
+                                  {" · "}
+                                  {job.checkpointPaths?.length
+                                    ? `${job.checkpointPaths.length} checkpoints`
+                                    : "No checkpoints"}
+                                </p>
+                              </div>
+                              <span className="ml-2 whitespace-nowrap text-[11px] uppercase tracking-wide text-neutral-500">
+                                {job.status}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
                 {/* Popular badge */}
                 <div className="absolute top-4 right-4">
                   <Badge className="border-black bg-black text-white text-xs">

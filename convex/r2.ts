@@ -76,13 +76,17 @@ export const { syncMetadata } = r2.clientApi({
     if (!datasetId) {
       throw new Error("Invalid dataset key");
     }
-    await assertDatasetOwner(ctx, datasetId, identity.subject);
+    const dataset = await assertDatasetOwner(ctx, datasetId, identity.subject);
     await ctx.db.insert("datasetImages", {
       datasetId,
       userId: identity.subject,
       key,
       bucket,
       createdAt: Date.now(),
+    });
+    await ctx.db.patch(datasetId, {
+      updatedAt: Date.now(),
+      r2ObjectCount: (dataset.r2ObjectCount ?? 0) + 1,
     });
   },
 });

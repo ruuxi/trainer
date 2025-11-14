@@ -1,36 +1,59 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+## GoModel Trainer – Architecture Notes
 
-## Getting Started
+This workspace hosts the customer-facing **trainer** app (Next.js 16 + Convex) that
+coordinates dataset uploads into Cloudflare R2 and triggers training jobs on the
+stand-alone **ai-toolkit** service.
 
-First, run the development server:
-
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```
+Browser ── upload ──► R2 bucket
+   │                     │
+   │         Convex      │
+   └─► trainer actions ──┼────► R2 sync worker (Python) ──► /app/ai-toolkit/datasets/r2
+                         │
+                         └────► ai-toolkit REST API (/api/jobs, /api/files, …)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Environment variables
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+`env.example.txt` enumerates everything required by both the Next.js runtime and
+Convex actions. The most important values for the ai-toolkit integration are:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Variable | Description |
+| --- | --- |
+| `AI_TOOLKIT_URL` | Base URL of the ai-toolkit UI/worker (e.g. `http://ai-toolkit:8675`). |
+| `AI_TOOLKIT_AUTH_TOKEN` | Bearer token required by ai-toolkit middleware (`AI_TOOLKIT_AUTH`). |
+| `R2_SYNC_WORKER_URL` | HTTP endpoint of the Python worker that mirrors R2 objects to disk. |
+| `AITK_R2_DATASETS_ROOT` | Absolute path (inside the ai-toolkit host/container) where synced datasets live. |
+| `AITK_DATASETS_FOLDER` / `AITK_TRAINING_FOLDER` | Canonical paths that should be configured inside ai-toolkit `/settings` so the synced datasets and resulting checkpoints are visible to the UI. |
 
-## Learn More
+### Contracts
 
-To learn more about Next.js, take a look at the following resources:
+Shared TypeScript definitions live in `convex/integration.ts`. They describe:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+* Dataset identity (`datasetId`, `r2Bucket`, `r2Prefix`).
+* `SyncDatasetRequest`/`SyncDatasetResponse` payloads that the Convex action sends to the R2 worker (`POST /sync-dataset`).
+* ai-toolkit job payloads (`AiToolkitCreateJobRequest`) mirroring `ui/src/app/api/jobs/route.ts`.
+* A helper `buildQwenImageEdit2509JobConfig(datasetPath)` that produces the JSON config for the only supported workflow (Qwen Image Edit 2509 on 32 GB GPUs).
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+These contracts ensure every component—trainer, sync worker, and ai-toolkit—agrees on
+paths and JSON structures without duplicating constant strings all over the codebase.
 
-## Deploy on Vercel
+### Running locally
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+pnpm install
+pnpm dev             # Next.js
+npx convex dev       # Convex backend
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+You will also need the ai-toolkit stack running somewhere that is reachable from the
+Convex environment. The minimum configuration for ai-toolkit is:
+
+```env
+AI_TOOLKIT_AUTH=super-secret-token
+AI_TOOLKIT_DATASETS=/app/ai-toolkit/datasets
+AI_TOOLKIT_OUTPUT=/app/ai-toolkit/output
+```
+
+…and the R2 sync worker should be able to read/write to
+`/app/ai-toolkit/datasets/r2`.
