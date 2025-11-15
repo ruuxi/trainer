@@ -35,8 +35,11 @@ const assertDatasetOwner = async (
   return dataset;
 };
 
-const buildDatasetKey = (datasetId: Id<"datasets">) =>
-  `datasets/${datasetId}/images/${crypto.randomUUID()}`;
+const buildDatasetKey = (datasetId: Id<"datasets">, filename: string) => {
+  // Extract extension from filename, default to .jpg if not found
+  const ext = filename.match(/\.(jpg|jpeg|png|webp|gif|txt)$/i)?.[0] || '.jpg';
+  return `datasets/${datasetId}/data/${crypto.randomUUID()}${ext.toLowerCase()}`;
+};
 
 const extractDatasetIdFromKey = (key: string): Id<"datasets"> | null => {
   const parts = key.split("/");
@@ -52,6 +55,7 @@ const extractDatasetIdFromKey = (key: string): Id<"datasets"> | null => {
 export const generateUploadUrl = mutation({
   args: {
     datasetId: v.id("datasets"),
+    filename: v.string(),
   },
   returns: v.object({
     key: v.string(),
@@ -60,7 +64,7 @@ export const generateUploadUrl = mutation({
   handler: async (ctx, args) => {
     const identity = await getIdentity(ctx);
     await assertDatasetOwner(ctx, args.datasetId, identity.subject);
-    const key = buildDatasetKey(args.datasetId);
+    const key = buildDatasetKey(args.datasetId, args.filename);
     const { url } = await r2.generateUploadUrl(key);
     return { key, url };
   },

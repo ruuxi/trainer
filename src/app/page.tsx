@@ -256,6 +256,7 @@ export default function Home() {
         selectedFiles.map(async (file) => {
           const { url, key } = await generateUploadUrl({
             datasetId: datasetInfo.datasetId,
+            filename: file.name,
           });
           const response = await fetch(url, {
             method: "PUT",

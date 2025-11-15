@@ -190,12 +190,20 @@ export const syncJobsForDataset = action({
         
         const newStatus = runpodStatus.status ?? job.status;
         
+        // Extract R2 output paths if present
+        const output = runpodStatus.output || {};
+        const r2Outputs = output.r2_outputs || {};
+        const checkpointPaths = r2Outputs.checkpoints || [];
+        const samplePaths = r2Outputs.samples || [];
+        
         await ctx.runMutation(internal.jobs_helpers.updateJobStatus, {
           jobId: job._id,
           status: newStatus,
           updatedAt: now,
           lastStatusSync: now,
           runpodOutput: runpodStatus.output,
+          checkpointPaths: checkpointPaths.length > 0 ? checkpointPaths : undefined,
+          samplePaths: samplePaths.length > 0 ? samplePaths : undefined,
         });
         synced += 1;
       } catch (error) {

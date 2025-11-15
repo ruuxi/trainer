@@ -117,14 +117,31 @@ export const updateJobStatus = internalMutation({
     updatedAt: v.number(),
     lastStatusSync: v.number(),
     runpodOutput: v.optional(v.any()),
+    checkpointPaths: v.optional(v.array(v.string())),
+    samplePaths: v.optional(v.array(v.string())),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await ctx.db.patch(args.jobId, {
+    const update: {
+      status: string;
+      updatedAt: number;
+      lastStatusSync: number;
+      checkpointPaths?: string[];
+      samplePaths?: string[];
+    } = {
       status: args.status,
       updatedAt: args.updatedAt,
       lastStatusSync: args.lastStatusSync,
-    });
+    };
+
+    if (args.checkpointPaths) {
+      update.checkpointPaths = args.checkpointPaths;
+    }
+    if (args.samplePaths) {
+      update.samplePaths = args.samplePaths;
+    }
+
+    await ctx.db.patch(args.jobId, update);
     return null;
   },
 });

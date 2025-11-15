@@ -35,7 +35,7 @@ export const create = mutation({
     });
 
     await ctx.db.patch(datasetId, {
-      r2Prefix: `datasets/${datasetId}/images`,
+      r2Prefix: `datasets/${datasetId}/data`,
       updatedAt: Date.now(),
     });
 
