@@ -20,6 +20,8 @@ import type * as generatedSchema from "../generatedSchema.js";
 import type * as http from "../http.js";
 import type * as integration from "../integration.js";
 import type * as jobs from "../jobs.js";
+import type * as jobs_helpers from "../jobs_helpers.js";
+import type * as jobs_queries from "../jobs_queries.js";
 import type * as r2 from "../r2.js";
 import type * as todos from "../todos.js";
 
@@ -42,6 +44,8 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   integration: typeof integration;
   jobs: typeof jobs;
+  jobs_helpers: typeof jobs_helpers;
+  jobs_queries: typeof jobs_queries;
   r2: typeof r2;
   todos: typeof todos;
 }>;

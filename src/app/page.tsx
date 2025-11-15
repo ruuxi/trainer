@@ -90,7 +90,7 @@ export default function Home() {
   const [isSyncingJobs, setIsSyncingJobs] = useState(false);
   const [jobToast, setJobToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const datasetJobs = useQuery(
-    api.jobs.listJobsForDataset,
+    api.jobs_helpers.listJobsForDataset,
     activeDatasetId ? { datasetId: activeDatasetId } : "skip",
   );
   const datasetJobList = Array.isArray(datasetJobs) ? datasetJobs : [];
@@ -126,22 +126,28 @@ export default function Home() {
 
   const handleFileSelection = useCallback(
     async (files: FileList | File[]) => {
+      console.log("handleFileSelection called with", files?.length, "files");
       if (!isSignedIn) {
         setShowSignInDialog(true);
         return;
       }
 
       try {
-        await ensureDataset();
+        console.log("Ensuring dataset...");
+        const datasetInfo = await ensureDataset();
+        console.log("Dataset ensured:", datasetInfo);
       } catch (error) {
-        console.error(error);
+        console.error("Dataset creation error:", error);
         setUploadMessage("Failed to create dataset. Please try again.");
         return;
       }
 
-      const incoming = Array.from(files).filter((file) =>
+      const fileArray = Array.from(files);
+      console.log("Files before filter:", fileArray.map(f => ({ name: f.name, type: f.type, size: f.size })));
+      const incoming = fileArray.filter((file) =>
         file.type ? file.type.startsWith("image/") : true,
       );
+      console.log("Filtered to", incoming.length, "image files");
       if (!incoming.length) {
         return;
       }
@@ -158,6 +164,7 @@ export default function Home() {
             next.push(file);
           }
         });
+        console.log("Updated selectedFiles, new count:", next.length);
         return next;
       });
     },
@@ -210,8 +217,14 @@ export default function Home() {
         event.target.value = "";
         return;
       }
-      void handleFileSelection(files);
+      // Convert FileList to array immediately before clearing input
+      const fileArray = Array.from(files);
       event.target.value = "";
+      
+      handleFileSelection(fileArray).catch((error) => {
+        console.error("File selection error:", error);
+        setUploadMessage("Failed to select files. Please try again.");
+      });
     },
     [handleFileSelection, isSignedIn],
   );
@@ -295,7 +308,7 @@ export default function Home() {
       });
       setJobToast({
         type: "success",
-        message: `Queued job ${result.jobName ?? ""}`.trim(),
+        message: `Training started! RunPod job: ${result.runpodJobId}`,
       });
     } catch (error) {
       console.error(error);

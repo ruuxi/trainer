@@ -1,44 +1,78 @@
 ## GoModel Trainer – Architecture Notes
 
-This workspace hosts the customer-facing **trainer** app (Next.js 16 + Convex) that
-coordinates dataset uploads into Cloudflare R2 and triggers training jobs on the
-stand-alone **ai-toolkit** service.
+This workspace hosts the customer-facing **trainer** app (Next.js 16 + Convex) that coordinates dataset uploads into Cloudflare R2 and triggers training jobs on RunPod Serverless.
 
 ```
 Browser ── upload ──► R2 bucket
    │                     │
    │         Convex      │
-   └─► trainer actions ──┼────► R2 sync worker (Python) ──► /app/ai-toolkit/datasets/r2
-                         │
-                         └────► ai-toolkit REST API (/api/jobs, /api/files, …)
+   └─► trainer actions ──┼────► RunPod Serverless (/run)
+                         │            │
+                         │            └──► Sync from R2 → Train → Return results
 ```
 
-### Environment variables
+### Simplified Architecture (No Middleware)
 
-`env.example.txt` enumerates everything required by both the Next.js runtime and
-Convex actions. The most important values for the ai-toolkit integration are:
+The trainer now calls RunPod Serverless directly:
+
+1. User uploads images → R2
+2. User clicks "Train" → Convex action calls `POST /v2/{endpoint}/run` with:
+   - `job_config`: Qwen-Image-Edit-2509 training config
+   - `r2_dataset`: {datasetId, bucket, prefix}
+3. RunPod worker:
+   - Downloads dataset from R2 to local storage
+   - Runs ai-toolkit training
+   - Returns status/results
+4. Trainer polls `/v2/{endpoint}/status/{id}` for progress
+
+**No separate sync worker or ai-toolkit UI needed for training** - just the RunPod Serverless endpoint with GPU workers.
+
+### Environment Variables (Convex Dashboard)
+
+Set these in https://dashboard.convex.dev under your deployment's Environment Variables:
 
 | Variable | Description |
 | --- | --- |
-| `AI_TOOLKIT_URL` | Base URL of the ai-toolkit UI/worker (e.g. `http://ai-toolkit:8675`). |
-| `AI_TOOLKIT_AUTH_TOKEN` | Bearer token required by ai-toolkit middleware (`AI_TOOLKIT_AUTH`). |
-| `R2_SYNC_WORKER_URL` | HTTP endpoint of the Python worker that mirrors R2 objects to disk. |
-| `AITK_R2_DATASETS_ROOT` | Absolute path (inside the ai-toolkit host/container) where synced datasets live. |
-| `AITK_DATASETS_FOLDER` / `AITK_TRAINING_FOLDER` | Canonical paths that should be configured inside ai-toolkit `/settings` so the synced datasets and resulting checkpoints are visible to the UI. |
+| `RUNPOD_ENDPOINT_ID` | Your RunPod Serverless endpoint ID (e.g. `re2sx58p1s4eex`) |
+| `RUNPOD_API_KEY` | RunPod API key for calling `/run` and `/status` |
+| `R2_BUCKET` | Cloudflare R2 bucket name where datasets are uploaded |
+
+### Environment Variables (RunPod Serverless)
+
+Set these in RunPod console for your serverless endpoint:
+
+| Variable | Description |
+| --- | --- |
+| `R2_ENDPOINT` | `https://<account-id>.r2.cloudflarestorage.com` |
+| `R2_ACCESS_KEY_ID` | R2 access key (must be exactly 32 characters) |
+| `R2_SECRET_ACCESS_KEY` | R2 secret key |
+| `R2_REGION` | `auto` |
+| `HF_TOKEN` | HuggingFace token for downloading Qwen model |
 
 ### Contracts
 
-Shared TypeScript definitions live in `convex/integration.ts`. They describe:
+Shared definitions in `convex/integration.ts`:
 
-* Dataset identity (`datasetId`, `r2Bucket`, `r2Prefix`).
-* `SyncDatasetRequest`/`SyncDatasetResponse` payloads that the Convex action sends to the R2 worker (`POST /sync-dataset`).
-* ai-toolkit job payloads (`AiToolkitCreateJobRequest`) mirroring `ui/src/app/api/jobs/route.ts`.
-* A helper `buildQwenImageEdit2509JobConfig(datasetPath)` that produces the JSON config for the only supported workflow (Qwen Image Edit 2509 on 32 GB GPUs).
+* Dataset identity (`datasetId`, `r2Bucket`, `r2Prefix`)
+* `buildQwenImageEdit2509JobConfig(datasetPath)` - Generates training config
+* RunPod API constants
 
-These contracts ensure every component—trainer, sync worker, and ai-toolkit—agrees on
-paths and JSON structures without duplicating constant strings all over the codebase.
+The serverless handler (`ai-toolkit/rp_handler.py`) accepts:
 
-### Running locally
+```json
+{
+  "input": {
+    "job_config": { ... },
+    "r2_dataset": {
+      "datasetId": "...",
+      "bucket": "...",
+      "prefix": "datasets/..."
+    }
+  }
+}
+```
+
+### Running Locally
 
 ```bash
 pnpm install
@@ -46,14 +80,11 @@ pnpm dev             # Next.js
 npx convex dev       # Convex backend
 ```
 
-You will also need the ai-toolkit stack running somewhere that is reachable from the
-Convex environment. The minimum configuration for ai-toolkit is:
+The Convex backend will call your RunPod Serverless endpoint when training is triggered.
 
-```env
-AI_TOOLKIT_AUTH=super-secret-token
-AI_TOOLKIT_DATASETS=/app/ai-toolkit/datasets
-AI_TOOLKIT_OUTPUT=/app/ai-toolkit/output
-```
+### Testing
 
-…and the R2 sync worker should be able to read/write to
-`/app/ai-toolkit/datasets/r2`.
+1. Upload images via the trainer UI
+2. Click "Train Qwen Image Edit 2509"
+3. Check Convex logs for RunPod job ID
+4. Monitor job status in RunPod dashboard or via "Refresh" button in trainer UI

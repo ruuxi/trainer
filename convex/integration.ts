@@ -4,13 +4,10 @@
  * job orchestration APIs.
  */
 
-export const AI_TOOLKIT_URL =
-  process.env.AI_TOOLKIT_URL ?? 'http://ai-toolkit:8675';
-
-export const AI_TOOLKIT_AUTH_TOKEN = process.env.AI_TOOLKIT_AUTH_TOKEN ?? '';
-
-export const R2_SYNC_WORKER_URL =
-  process.env.R2_SYNC_WORKER_URL ?? 'http://ai-toolkit-sync:8080';
+// RunPod Serverless endpoint for training jobs
+export const RUNPOD_ENDPOINT_ID = process.env.RUNPOD_ENDPOINT_ID;
+export const RUNPOD_API_KEY = process.env.RUNPOD_API_KEY ?? '';
+export const RUNPOD_API_BASE = 'https://api.runpod.ai/v2';
 
 /**
  * Absolute path on the ai-toolkit host/container where R2 datasets
@@ -72,10 +69,11 @@ export type SyncDatasetResponse =
 /**
  * ai-toolkit job creation payload. Mirrors the Next.js API route in
  * ai-toolkit/ui/src/app/api/jobs/route.ts
+ * Note: gpu_ids must be a comma-separated string like "0" or "0,1"
  */
 export type AiToolkitCreateJobRequest = {
   name: string;
-  gpu_ids: number[];
+  gpu_ids: string;
   job_config: Record<string, unknown>;
 };
 
@@ -94,39 +92,74 @@ export type AiToolkitCreateJobResponse =
  * Helper to build the minimal job config we need for Qwen Image Edit 2509.
  * Mirrors the defaults defined in ai-toolkit/ui/src/app/jobs/new/options.ts
  */
-export const buildQwenImageEdit2509JobConfig = (datasetPath: string) => ({
-  process: [
-    {
-      name: 'qwen_image_edit_plus',
-      model: {
-        name_or_path: QWEN_IMAGE_EDIT_MODEL,
-        quantize: true,
-        quantize_te: true,
-        low_vram: true,
-        qtype: 'qfloat8',
-        model_kwargs: {
-          match_target_res: false,
+export const buildQwenImageEdit2509JobConfig = (datasetPath: string, jobName: string) => ({
+  job: 'extension',
+  config: {
+    name: jobName,
+    process: [
+      {
+        type: 'diffusion_trainer',
+        training_folder: 'output',
+        device: 'cuda:0',
+        network: {
+          type: 'lora',
+          linear: 16,
+          linear_alpha: 16,
         },
-        accuracy_recovery_adapter: QWEN_IMAGE_EDIT_ACCURACY_ADAPTER,
-      },
-      train: {
-        noise_scheduler: 'flowmatch',
-        timestep_type: 'weighted',
-        unload_text_encoder: false,
-      },
-      sample: {
-        sampler: 'flowmatch',
-        guidance_scale: 3.5,
-      },
-      datasets: [
-        {
-          name: 'primary',
-          dataset_path: datasetPath,
-          cache_latents: true,
-          resolution: 1024,
+        save: {
+          dtype: 'float16',
+          save_every: 250,
+          max_step_saves_to_keep: 4,
         },
-      ],
-    },
-  ],
+        model: {
+          name_or_path: QWEN_IMAGE_EDIT_MODEL,
+          arch: 'qwen_image_edit_plus',
+          quantize: true,
+          quantize_te: true,
+          low_vram: true,
+          qtype: QWEN_IMAGE_EDIT_ACCURACY_ADAPTER,
+          qtype_te: 'qfloat8',
+        },
+        train: {
+          batch_size: 1,
+          cache_text_embeddings: true,
+          steps: 500,
+          gradient_accumulation: 1,
+          timestep_type: 'weighted',
+          train_unet: true,
+          train_text_encoder: false,
+          gradient_checkpointing: true,
+          noise_scheduler: 'flowmatch',
+          optimizer: 'adamw8bit',
+          lr: 0.0001,
+          dtype: 'bf16',
+        },
+        sample: {
+          sampler: 'flowmatch',
+          sample_every: 250,
+          width: 1024,
+          height: 1024,
+          seed: 42,
+          walk_seed: true,
+          guidance_scale: 3,
+          sample_steps: 25,
+          samples: [
+            {
+              prompt: 'a professional photo',
+              neg: '',
+            },
+          ],
+        },
+        datasets: [
+          {
+            folder_path: datasetPath,
+            caption_ext: 'txt',
+            caption_dropout_rate: 0.05,
+            resolution: [512, 768, 1024],
+          },
+        ],
+      },
+    ],
+  },
 });
 
