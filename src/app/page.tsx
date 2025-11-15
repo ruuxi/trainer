@@ -371,14 +371,29 @@ export default function Home() {
             <span className="font-semibold text-lg tracking-tight">GoModel</span>
           </Link>
           <nav className="flex items-center gap-4">
-            <Link href="/sign-in">
-              <Button variant="ghost" size="sm" className="font-medium">Sign In</Button>
-            </Link>
-            <Link href="/sign-up">
-              <Button size="sm" className="font-medium bg-black text-white hover:bg-neutral-800">
-                Get Started
-              </Button>
-            </Link>
+            {isSignedIn ? (
+              <>
+                <Link href="/dashboard">
+                  <Button variant="ghost" size="sm" className="font-medium">Dashboard</Button>
+                </Link>
+                <Link href="/settings">
+                  <Button size="sm" className="font-medium bg-black text-white hover:bg-neutral-800">
+                    Settings
+                  </Button>
+                </Link>
+              </>
+            ) : (
+              <>
+                <Link href="/sign-in">
+                  <Button variant="ghost" size="sm" className="font-medium">Sign In</Button>
+                </Link>
+                <Link href="/sign-up">
+                  <Button size="sm" className="font-medium bg-black text-white hover:bg-neutral-800">
+                    Get Started
+                  </Button>
+                </Link>
+              </>
+            )}
           </nav>
         </div>
       </header>
