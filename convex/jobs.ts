@@ -8,7 +8,7 @@ import {
   RUNPOD_API_BASE,
   RUNPOD_API_KEY,
   RUNPOD_ENDPOINT_ID,
-  buildQwenImageEdit2509JobConfig,
+  buildQwenImageJobConfig,
 } from "./integration";
 
 type AuthCtx = {
@@ -84,7 +84,7 @@ const fetchRunPodJobStatus = async (jobId: string) => {
   return res.json();
 };
 
-export const startQwenImageEditJob = action({
+export const startQwenImageJob = action({
   args: {
     datasetId: v.id("datasets"),
   },
@@ -111,8 +111,8 @@ export const startQwenImageEditJob = action({
     }
 
     // Build job config (placeholder path will be replaced by serverless worker)
-    const jobName = `qwen-2509-${dataset.name}-${Date.now()}`;
-    const jobConfig = buildQwenImageEdit2509JobConfig("/workspace/datasets/placeholder", jobName);
+    const jobName = `qwen-image-${dataset.name}-${Date.now()}`;
+    const jobConfig = buildQwenImageJobConfig("/workspace/datasets/placeholder", jobName);
 
     // Call RunPod serverless endpoint
     const runpodJob = await startRunPodJob({

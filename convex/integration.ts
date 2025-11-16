@@ -29,9 +29,9 @@ export const AITK_TRAINING_FOLDER =
 
 export const DEFAULT_GPU_IDS = [0];
 
-export const QWEN_IMAGE_EDIT_MODEL = 'Qwen/Qwen-Image-Edit-2509';
-export const QWEN_IMAGE_EDIT_ACCURACY_ADAPTER =
-  'uint3|ostris/accuracy_recovery_adapters/qwen_image_edit_2509_torchao_uint3.safetensors';
+export const QWEN_IMAGE_MODEL = 'Qwen/Qwen-Image';
+export const QWEN_IMAGE_ACCURACY_ADAPTER =
+  'uint3|ostris/accuracy_recovery_adapters/qwen_image_torchao_uint3.safetensors';
 
 /**
  * Information we store per dataset so we can sync it from R2 before
@@ -89,10 +89,10 @@ export type AiToolkitCreateJobResponse =
     };
 
 /**
- * Helper to build the minimal job config we need for Qwen Image Edit 2509.
- * Mirrors the defaults defined in ai-toolkit/ui/src/app/jobs/new/options.ts
+ * Helper to build the minimal job config we need for Qwen Image.
+ * Based on train_lora_qwen_image_24gb.yaml
  */
-export const buildQwenImageEdit2509JobConfig = (datasetPath: string, jobName: string) => ({
+export const buildQwenImageJobConfig = (datasetPath: string, jobName: string) => ({
   job: 'extension',
   config: {
     name: jobName,
@@ -111,21 +111,21 @@ export const buildQwenImageEdit2509JobConfig = (datasetPath: string, jobName: st
           save_every: 250,
           max_step_saves_to_keep: 4,
         },
-        model: {
-          name_or_path: QWEN_IMAGE_EDIT_MODEL,
-          arch: 'qwen_image_edit_plus',
-          quantize: true,
-          quantize_te: true,
-          low_vram: true,
-          qtype: QWEN_IMAGE_EDIT_ACCURACY_ADAPTER,
-          qtype_te: 'qfloat8',
-        },
+        datasets: [
+          {
+            folder_path: datasetPath,
+            caption_ext: 'txt',
+            caption_dropout_rate: 0.05,
+            shuffle_tokens: false,
+            cache_latents_to_disk: true,
+            resolution: [512, 768, 1024],
+          },
+        ],
         train: {
           batch_size: 1,
           cache_text_embeddings: true,
-          steps: 500,
+          steps: 2000,
           gradient_accumulation: 1,
-          timestep_type: 'weighted',
           train_unet: true,
           train_text_encoder: false,
           gradient_checkpointing: true,
@@ -134,30 +134,38 @@ export const buildQwenImageEdit2509JobConfig = (datasetPath: string, jobName: st
           lr: 0.0001,
           dtype: 'bf16',
         },
+        model: {
+          name_or_path: QWEN_IMAGE_MODEL,
+          arch: 'qwen_image',
+          quantize: true,
+          qtype: QWEN_IMAGE_ACCURACY_ADAPTER,
+          quantize_te: true,
+          qtype_te: 'qfloat8',
+          low_vram: true,
+        },
         sample: {
           sampler: 'flowmatch',
           sample_every: 250,
           width: 1024,
           height: 1024,
+          prompts: [
+            'woman with red hair, playing chess at the park, bomb going off in the background',
+            'a woman holding a coffee cup, in a beanie, sitting at a cafe',
+            'a horse is a DJ at a night club, fish eye lens, smoke machine, lazer lights, holding a martini',
+            'a man showing off his cool new t shirt at the beach, a shark is jumping out of the water in the background',
+            'a bear building a log cabin in the snow covered mountains',
+            'woman playing the guitar, on stage, singing a song, laser lights, punk rocker',
+            'hipster man with a beard, building a chair, in a wood shop',
+            'photo of a man, white background, medium shot, modeling clothing, studio lighting, white backdrop',
+            'a man holding a sign that says, \'this is a sign\'',
+            'a bulldog, in a post apocalyptic world, with a shotgun, in a leather jacket, in a desert, with a motorcycle',
+          ],
+          neg: '',
           seed: 42,
           walk_seed: true,
           guidance_scale: 3,
           sample_steps: 25,
-          samples: [
-            {
-              prompt: 'a professional photo',
-              neg: '',
-            },
-          ],
         },
-        datasets: [
-          {
-            folder_path: datasetPath,
-            caption_ext: 'txt',
-            caption_dropout_rate: 0.05,
-            resolution: [512, 768, 1024],
-          },
-        ],
       },
     ],
   },

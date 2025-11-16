@@ -10,6 +10,17 @@ import { Sparkles, Zap, Users, Heart, ArrowRight, Upload, Check, Loader2, Rocket
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { cn } from "@/lib/utils";
+import {
+  ensureMaxResolution,
+  isCaptionFile,
+  isImageFile,
+  isZipFile,
+  MAX_IMAGE_PIXELS,
+  MAX_CAPTIONS_PER_DATASET,
+  MAX_IMAGES_PER_DATASET,
+  UPLOAD_CONCURRENCY,
+  runWithConcurrency,
+} from "@/lib/uploads";
 import SignInDialog from "@/components/auth/SignInDialog";
 
 // Mock data for featured content
@@ -76,7 +87,7 @@ export default function Home() {
   const createDataset = useMutation(api.datasets.create);
   const generateUploadUrl = useMutation(api.r2.generateUploadUrl);
   const syncMetadata = useMutation(api.r2.syncMetadata);
-  const startTrainingJob = useAction(api.jobs.startQwenImageEditJob);
+  const startTrainingJob = useAction(api.jobs.startQwenImageJob);
   const syncJobsAction = useAction(api.jobs.syncJobsForDataset);
 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -94,6 +105,7 @@ export default function Home() {
     activeDatasetId ? { datasetId: activeDatasetId } : "skip",
   );
   const datasetJobList = Array.isArray(datasetJobs) ? datasetJobs : [];
+  const maxResolutionLabel = Math.round(Math.sqrt(MAX_IMAGE_PIXELS));
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const datasetCreationPromise = useRef<Promise<{ datasetId: Id<"datasets">; datasetName: string }> | null>(null);
@@ -126,16 +138,13 @@ export default function Home() {
 
   const handleFileSelection = useCallback(
     async (files: FileList | File[]) => {
-      console.log("handleFileSelection called with", files?.length, "files");
       if (!isSignedIn) {
         setShowSignInDialog(true);
         return;
       }
 
       try {
-        console.log("Ensuring dataset...");
-        const datasetInfo = await ensureDataset();
-        console.log("Dataset ensured:", datasetInfo);
+        await ensureDataset();
       } catch (error) {
         console.error("Dataset creation error:", error);
         setUploadMessage("Failed to create dataset. Please try again.");
@@ -143,17 +152,25 @@ export default function Home() {
       }
 
       const fileArray = Array.from(files);
-      console.log("Files before filter:", fileArray.map(f => ({ name: f.name, type: f.type, size: f.size })));
-      const incoming = fileArray.filter((file) =>
-        file.type ? file.type.startsWith("image/") : true,
-      );
-      console.log("Filtered to", incoming.length, "image files");
-      if (!incoming.length) {
+      if (!fileArray.length) {
         return;
       }
+
+      let warningMessage: string | null = null;
+
       setSelectedFiles((prev) => {
         const next = [...prev];
-        incoming.forEach((file) => {
+        let availableImages =
+          MAX_IMAGES_PER_DATASET - prev.filter((file) => isImageFile(file)).length;
+        let availableCaptions =
+          MAX_CAPTIONS_PER_DATASET - prev.filter((file) => isCaptionFile(file)).length;
+
+        let zipRejected = false;
+        let unsupportedRejected = false;
+        let imageLimitReached = false;
+        let captionLimitReached = false;
+
+        const maybeAddFile = (file: File) => {
           const exists = next.some(
             (current) =>
               current.name === file.name &&
@@ -163,10 +180,57 @@ export default function Home() {
           if (!exists) {
             next.push(file);
           }
+        };
+
+        fileArray.forEach((file) => {
+          if (isZipFile(file)) {
+            zipRejected = true;
+            return;
+          }
+          if (isImageFile(file)) {
+            if (availableImages <= 0) {
+              imageLimitReached = true;
+              return;
+            }
+            availableImages -= 1;
+            maybeAddFile(file);
+            return;
+          }
+          if (isCaptionFile(file)) {
+            if (availableCaptions <= 0) {
+              captionLimitReached = true;
+              return;
+            }
+            availableCaptions -= 1;
+            maybeAddFile(file);
+            return;
+          }
+          unsupportedRejected = true;
         });
-        console.log("Updated selectedFiles, new count:", next.length);
+
+        const warnings: string[] = [];
+        if (zipRejected) {
+          warnings.push("ZIP uploads aren't supported yet. Please upload the files directly.");
+        }
+        if (unsupportedRejected) {
+          warnings.push("Only JPG, PNG, WebP, GIF, and TXT files are allowed.");
+        }
+        if (imageLimitReached) {
+          warnings.push(`Image limit reached (${MAX_IMAGES_PER_DATASET} max).`);
+        }
+        if (captionLimitReached) {
+          warnings.push(`Caption limit reached (${MAX_CAPTIONS_PER_DATASET} max).`);
+        }
+        warningMessage = warnings.length ? warnings.join(" ") : null;
+
         return next;
       });
+
+      if (warningMessage) {
+        setUploadMessage(warningMessage);
+      } else {
+        setUploadMessage(null);
+      }
     },
     [ensureDataset, isSignedIn],
   );
@@ -252,23 +316,23 @@ export default function Home() {
       if (!datasetInfo) {
         throw new Error("Dataset not available");
       }
-      await Promise.all(
-        selectedFiles.map(async (file) => {
-          const { url, key } = await generateUploadUrl({
-            datasetId: datasetInfo.datasetId,
-            filename: file.name,
-          });
-          const response = await fetch(url, {
-            method: "PUT",
-            headers: { "Content-Type": file.type },
-            body: file,
-          });
-          if (!response.ok) {
-            throw new Error(`Failed to upload image: ${response.statusText}`);
-          }
-          await syncMetadata({ key });
-        }),
-      );
+      const filesToUpload = [...selectedFiles];
+      await runWithConcurrency(filesToUpload, UPLOAD_CONCURRENCY, async (file) => {
+        const processedFile = await ensureMaxResolution(file);
+        const { url, key } = await generateUploadUrl({
+          datasetId: datasetInfo.datasetId,
+          filename: processedFile.name,
+        });
+        const response = await fetch(url, {
+          method: "PUT",
+          headers: { "Content-Type": processedFile.type || "application/octet-stream" },
+          body: processedFile,
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to upload ${processedFile.name}: ${response.statusText}`);
+        }
+        await syncMetadata({ key });
+      });
       setSelectedFiles([]);
       setUploadMessage(
         datasetInfo.datasetName
@@ -437,7 +501,7 @@ export default function Home() {
                       <div className="flex size-5 items-center justify-center rounded-full bg-neutral-100">
                         <Check className="size-3" />
                       </div>
-                      <span>Support for JPG, PNG, WebP</span>
+                      <span>Support for JPG, PNG, WebP, TXT</span>
                     </div>
                     <div className="flex items-center gap-3 text-neutral-600 text-sm">
                       <div className="flex size-5 items-center justify-center rounded-full bg-neutral-100">
@@ -471,10 +535,10 @@ export default function Home() {
                     }}
                   >
                     <p className="font-medium text-sm text-neutral-900">
-                      Drag & drop images or click to browse
+                      Drag & drop images or captions, or click to browse
                     </p>
                     <p className="text-xs text-neutral-500 mt-1">
-                      JPG, PNG, or WebP up to 25MB each
+                      Up to 500 images + 500 TXT. Large images auto-resized to ~{maxResolutionLabel}x{maxResolutionLabel} total pixels.
                     </p>
                     {activeDatasetName && (
                       <p className="mt-2 text-xs text-neutral-500">
@@ -502,7 +566,7 @@ export default function Home() {
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept="image/png,image/jpeg,image/webp"
+                    accept="image/png,image/jpeg,image/webp,.txt,text/plain"
                     multiple
                     className="sr-only"
                     onChange={handleFileInputChange}
@@ -543,7 +607,7 @@ export default function Home() {
                   >
                     {isStartingJob && <Loader2 className="mr-2 size-4 animate-spin" />}
                     <Rocket className="mr-2 size-4" />
-                    Train Qwen Image Edit 2509
+                    Train Qwen Image
                   </Button>
                 </CardFooter>
                 {(jobToast || datasetJobList.length > 0) && (
